@@ -1,0 +1,7 @@
+venv
+clean_data
+test_pipeline
+predictive-maintenance
+__pycache__
+*.ipynb
+*.zip
