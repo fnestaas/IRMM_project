@@ -10,7 +10,7 @@ from torch.optim import Adam
 from torch.nn.functional import one_hot
 from decouple import config as cfg
 
-def train(model, train_loader, criterion, optimizer, n_epochs=10, print_every=5, val_loader=None):
+def train(model, train_loader, criterion, optimizer, n_epochs=100, print_every=5, val_loader=None):
     """
     Training loop and reporting accuracy etc
     Parameters:
@@ -118,7 +118,7 @@ def main():
     train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration)
     val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration)
     hs = 128 # LSTM hidden size
-    model = LSTM(input_size=train_dataset.n_features, hidden_size=hs, num_layers=4, dropout=.25, batch_first=True)
+    model = LSTM(input_size=train_dataset.n_features, hidden_size=hs, num_layers=2, dropout=.25, batch_first=True)
     model = torch.nn.Sequential(model, TakeLast(), torch.nn.Linear(hs, 3)).double()
     train_loader = DataLoader(train_dataset, batch_size=32)
     val_loader = DataLoader(val_dataset, batch_size=32)

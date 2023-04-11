@@ -12,7 +12,7 @@ def main():
     for which in range(1, 5):
         df = pd.read_csv(f'{directory}/train_{which}.csv')
         df_train = df.where(df['engine_no'] < 80).dropna()
-        df_val = df.where(df['engine_no'] < 80).dropna()
+        df_val = df.where(df['engine_no'] >= 80).dropna()
         df_train.to_csv(f'{directory}/train_engines_{which}.csv')
         df_val.to_csv(f'{directory}/val_engines_{which}.csv')
         
