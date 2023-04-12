@@ -16,11 +16,12 @@ class MyDataset(Dataset):
     """
     Custom dataset
     """
-    def __init__(self, data_path, train=True, normalize=True, duration=50):
+    def __init__(self, data_path, train=True, normalize=True, duration=50, pad=True):
         super().__init__()
         self.path = data_path
         self.train = train
         self.normalize = normalize
+        self.pad = pad 
         self.make_dataset(duration)
     
     def make_dataset(self, duration):
@@ -35,6 +36,21 @@ class MyDataset(Dataset):
                 df = pd.concat([df, pd.DataFrame(np.zeros((duration - len(df) % duration, df.shape[-1])), columns=df.columns)], axis=0)
             return df 
         
+        def shift_to_fit(df, duration):
+            """
+            TODO: wrong if l is divisible by duration
+            Instead of padding, repeat parts of the dataframe to make it divisible by duration
+            """
+            l = len(df)
+            mod = l % duration
+            n_chunks = len(df) // duration + int(mod != 0)
+            if n_chunks > 1:
+                skip = (l - duration) / (n_chunks - 1) 
+                new_df = pd.concat([df[int(i*skip): int(i*skip) + duration] for i in range(n_chunks)], axis=0)
+            else:
+                new_df = pad_df(df.copy(), duration)
+            return new_df
+        
         def prepare_sample(df, i, duration):
             """
             Take one engine i and 
@@ -45,7 +61,10 @@ class MyDataset(Dataset):
             x = df.where(df['engine_no'] == i).dropna()
             x = x.drop(columns=['RUL', 'time_in_cycles', 'index', 'Unnamed: 0'], inplace=False) 
             x = moving_avg(x)
-            x = pad_df(x, duration)
+            if self.pad:
+                x = pad_df(x, duration)
+            else:
+                x = shift_to_fit(x, duration)
             retval = torch.tensor(x.to_numpy())
             return retval.reshape((-1, duration, x.shape[-1]))
         
@@ -73,14 +92,28 @@ class MyDataset(Dataset):
         labels = labels.to_list()
         cumulative_len = 0
         y0 = []
-        offset = duration//2 # duration //2 means we take the label in the middle
-        for l in lens:
-            targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
-            y0.append(targets[offset::duration]) # take the offset-th label of each block of size duration
-            if (l-1) % duration < offset: 
-                # there will be one label missing, which we set to be 0
-                y0.append([0])
-            cumulative_len = cumulative_len + l
+        if self.pad: # pad the signal
+            offset = duration//2 # duration //2 means we take the label in the middle
+            for l in lens:
+                targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
+                y0.append(targets[offset::duration]) # take the offset-th label of each block of size duration
+                if (l-1) % duration < offset: 
+                    # there will be one label missing, which we set to be 0
+                    y0.append([0])
+                cumulative_len = cumulative_len + l
+        else:
+            for l in lens: # the counterpart to shift_to_fit for y
+                mod = l % duration
+                n_chunks = l //duration + int(mod != 0)
+                skip = 0 if l <= duration else (l - duration) / (n_chunks - 1) 
+                offset = int(skip // 2)
+                targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
+                cumulative_len = cumulative_len + l
+                if n_chunks == 1 and l-1 < offset: # short frame
+                    y0.append([0])
+                else:
+                    y0.append([targets[offset + int(i*skip)] for i in range(n_chunks)]) # take the offset-th label of each block of size duration
+
         y = []
         for l in y0:
             y = y + l
@@ -93,6 +126,10 @@ class MyDataset(Dataset):
 
     def __len__(self):
         return len(self.x)
+    
+    @property
+    def class_distribution(self):
+        return {i: torch.sum(torch.where(self.y == i, 1, 0)) for i in range(self.y.max().int() + 1)}
     
 
 

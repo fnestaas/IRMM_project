@@ -113,10 +113,17 @@ class TakeLast(torch.nn.Module):
 
 def main():
     directory = cfg('DATA_DIRECTORY')
-    which = 1 # which dataset to load
+    which = 1 # which dataset to load (1, 2, 3 or 4)
     duration = 150 # duration of time chunks to feed the model
-    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration)
-    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration)
+    pad = False 
+    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad)
+    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad)
+
+    # validate class distributions 
+    print(f'class distribution on the training set: {train_dataset.class_distribution}')
+    print(f'class distribution on the validation set: {val_dataset.class_distribution}')
+    print('')
+
     hs = 128 # LSTM hidden size
     model = LSTM(input_size=train_dataset.n_features, hidden_size=hs, num_layers=2, dropout=.25, batch_first=True)
     model = torch.nn.Sequential(model, TakeLast(), torch.nn.Linear(hs, 3)).double()
