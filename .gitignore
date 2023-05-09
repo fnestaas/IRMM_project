@@ -5,3 +5,4 @@ predictive-maintenance
 __pycache__
 *.ipynb
 *.zip
+models/

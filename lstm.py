@@ -9,8 +9,13 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 from torch.nn.functional import one_hot
 from decouple import config as cfg
+from datetime import datetime 
+from pathlib import Path 
+import json 
+from model_utils import TakeLast
+from metrics import * 
 
-def train(model, train_loader, criterion, optimizer, n_epochs=100, print_every=5, val_loader=None):
+def train(model, train_loader, criterion, optimizer, n_epochs=100, print_every=5, val_loader=None, dir=None, data_metadata=None):
     """
     Training loop and reporting accuracy etc
     Parameters:
@@ -29,6 +34,7 @@ def train(model, train_loader, criterion, optimizer, n_epochs=100, print_every=5
         val_loader:
             DataLoader for validation data, or None if we do not want to validate.
     """
+    best_acc = -1
     for epoch in range(n_epochs):
         running_loss = 0
         model.train()
@@ -50,74 +56,24 @@ def train(model, train_loader, criterion, optimizer, n_epochs=100, print_every=5
                 report_acc(y_pred, y)
         if val_loader is not None:
             print('validating:')
-            validate(model, val_loader)
+            best_acc = validate(model, val_loader, best=best_acc, dir=dir, data_metadata=data_metadata)
             print('')
 
     model.eval()
 
-def report_acc(y_pred, y):
-    """
-    report accuracy of preds y_pred vs labels y
-    """
-    acc = pred2lbl(y_pred) == y
-    acc = acc.double().mean()
-    print(f'accuracy: {acc.item()}')
-
-def pred2lbl(y_pred):
-    """
-    convert model output (class probabilities) to label (a prediction of the form 0, 1, 2, ...)
-    """
-    return torch.argmax(y_pred, axis=-1)
-
-def confusion_matrix(y_pred, y, n_lbl=3):
-    """
-    Computes the confusion matrix
-    The element [i, j] is the number of times we predict i for true label j
-    E.g. if row i is 0, 0, 0, then we never predict label i
-    """
-    y_pred = pred2lbl(y_pred)
-    res = torch.zeros((n_lbl, n_lbl))
-    for i in range(n_lbl):
-        for j in range(n_lbl):
-            res[i, j] = torch.where(torch.logical_and(y_pred == i, y == j), 1, 0).sum()
-    return res
-
-def validate(model, val_loader):
-    """
-    Run validations of the model vs the val_loader
-    """
-    model.eval()
-    # accumulate predictions and report accuracy
-    preds = []
-    ys = []
-    for x, y in val_loader:
-        preds.append(model(x))
-        ys.append(y)
-    y_pred = torch.concat(preds, axis=0)
-    y = torch.concat(ys, axis=0)
-    report_acc(y_pred, y)
-    # confusion matrix; each column shows the predictions for one label
-    print('preds v; ys >')
-    print(confusion_matrix(y_pred, y))
-
-class TakeLast(torch.nn.Module):
-    """
-    This module selects the relevant LSTM state, since by default, we get 
-    much more information from the LSTM module than we need
-    """
-    def __init__(self) -> None:
-        super().__init__()
-    
-    def forward(self, x):
-        return x[0][:, -1, :]
-
 def main():
+    now = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+    dir = Path().cwd() / 'models' / now
+    dir.mkdir(parents=True, exist_ok=True)
+
     directory = cfg('DATA_DIRECTORY')
-    which = 1 # which dataset to load (1, 2, 3 or 4)
-    duration = 150 # duration of time chunks to feed the model
+    which = 4 # which dataset to load (1, 2, 3 or 4)
+    duration = 100 # duration of time chunks to feed the model
     pad = False 
-    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad)
-    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad)
+    normalize = True
+    data_metadata = {'which': which, 'duration': duration, 'pad': pad, 'normalize': normalize}
+    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize)
+    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize)
 
     # validate class distributions 
     print(f'class distribution on the training set: {train_dataset.class_distribution}')
@@ -131,7 +87,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=32)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = Adam(model.parameters(), lr=1e-3)
-    train(model, train_loader, criterion, optimizer, val_loader=val_loader)
+    train(model, train_loader, criterion, optimizer, val_loader=val_loader, dir=dir, data_metadata=data_metadata)
 
 
 

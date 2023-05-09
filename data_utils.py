@@ -73,6 +73,7 @@ class MyDataset(Dataset):
         if self.normalize: 
             rul = df['RUL'] # don't normalize the label
             df = (df - df.mean()) / df.std()
+            # df = (df - m) / (M - m)
             df['RUL'] = rul
 
         # we will need the lengths of the time series for each engine to recover the label
@@ -131,6 +132,18 @@ class MyDataset(Dataset):
     def class_distribution(self):
         return {i: torch.sum(torch.where(self.y == i, 1, 0)) for i in range(self.y.max().int() + 1)}
     
+
+class AdvDataset(Dataset):
+    def __init__(self, images, ref_dataset):
+        super().__init__()
+        self.images = images 
+        self.ref = ref_dataset 
+    
+    def __len__(self):
+        return len(self.ref)
+    
+    def __getitem__(self, index):
+        return self.images[index], self.ref[index][1]
 
 
 

@@ -1,6 +1,7 @@
 asttokens==2.2.1
 backcall==0.2.0
 certifi==2022.12.7
+chardet==4.0.0
 charset-normalizer==3.1.0
 cmake==3.26.1
 comm==0.1.2
@@ -11,7 +12,7 @@ decorator==5.1.1
 executing==1.2.0
 filelock==3.11.0
 fonttools==4.39.2
-idna==3.4
+idna==2.10
 importlib-metadata==6.1.0
 importlib-resources==5.12.0
 ipykernel==6.21.3
@@ -44,6 +45,7 @@ nvidia-nvtx-cu11==11.7.91
 packaging==23.0
 pandas==1.5.3
 parso==0.8.3
+pathlib==1.0.1
 pexpect==4.8.0
 pickleshare==0.7.5
 Pillow==9.4.0
@@ -59,7 +61,7 @@ python-decouple==3.8
 python-dotenv==1.0.0
 pytz==2022.7.1
 pyzmq==25.0.2
-requests==2.28.2
+requests==2.25.1
 scikit-learn==1.2.2
 scipy==1.10.1
 seaborn==0.12.2
@@ -68,8 +70,11 @@ six==1.16.0
 stack-data==0.6.2
 sympy==1.11.1
 threadpoolctl==3.1.0
-torch==2.0.0
+torch==2.0.1
+torchattacks==3.4.0
+torchvision==0.15.2
 tornado==6.2
+tqdm==4.65.0
 traitlets==5.9.0
 triton==2.0.0
 typing_extensions==4.5.0
