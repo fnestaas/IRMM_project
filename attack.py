@@ -25,7 +25,7 @@ from metrics import *
 from torch.nn.functional import one_hot
 
 class UntargetedPGD(nn.Module):
-    def __init__(self, model, eps=1, alpha=.1, noise_std=.1, steps=100, random_start=True, lower=None, upper=None):
+    def __init__(self, model, eps=1, alpha=.1, noise_std=.1, steps=100, random_start=False, lower=None, upper=None):
         super().__init__()
         self.model = model 
         self.eps = eps 
@@ -60,9 +60,6 @@ class UntargetedPGD(nn.Module):
                 pert_data = step(pert_data, labels)
             pert_data = torch.clamp(pert_data, min=data-self.eps, max=data+self.eps)
 
-            deviation = torch.abs(pert_data - data)
-            print(f'average absolute deviation: {deviation.mean()}')
-            print(f'max abs deviation: {deviation.max()}')
             perturbed.append(pert_data)
                 
         return torch.concat(perturbed, axis=0)
@@ -108,9 +105,6 @@ class TargetedPGD(UntargetedPGD):
                 pert_data = step(pert_data, labels)
             pert_data = torch.clamp(pert_data, min=data-self.eps, max=data+self.eps)
 
-            deviation = torch.abs(pert_data - data)
-            print(f'average absolute deviation: {deviation.mean()}')
-            print(f'max abs deviation: {deviation.max()}')
             perturbed.append(pert_data)
                 
         return torch.concat(perturbed, axis=0)
@@ -124,10 +118,12 @@ class TargetedPGD(UntargetedPGD):
 def main(args):
 
     model_name = args.model_name # which model to use
-    dir = Path().cwd() / 'models'
+    attack_type = args.attack_type
+    eps = float(args.perturbation_size)
+    dir = Path().cwd() / args.source_directory # directory containing the models
     if model_name == 'max': # take the model that was trained last
         model_name = max([str(i) for i in dir.iterdir()])
-    dir = dir / model_name
+    dir = dir / model_name # the directory of the model to use
     filename = dir /'model.pth'
     model = torch.load(filename)
     model.eval()
@@ -142,22 +138,48 @@ def main(args):
     which = data_metadata['which']
     duration = data_metadata['duration']
     pad = data_metadata['pad']
-    val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad)
+    val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad, shuffle=False)
     loader = DataLoader(val_dataset, batch_size=32)
 
     # do the attack
-    attacker = TargetedPGD(model)
-    adv_imgs = attacker(loader)
-    adv_loader = DataLoader(AdvDataset(adv_imgs, val_dataset))
+    if attack_type == 'targeted':
+        attacker = TargetedPGD(model, eps=eps)
+    else:
+        attacker = UntargetedPGD(model, eps=eps)
 
-    # report accuracies and copmare adversarial and normal cases
+    adv_imgs = attacker(loader)
+    adv_dataset = AdvDataset(adv_imgs, val_dataset)
+    adv_loader = DataLoader(adv_dataset)
+
+    # report accuracies and compare adversarial and normal cases
+    # prepare output directory
+    if args.target_directory is None:
+        stats_filename = 'adv_stats.json' 
+    else:
+        target_directory = dir / args.target_directory 
+        target_directory.mkdir(exist_ok=True, parents=True)
+        stats_filename = args.target_directory + 'adv_stats.json'
+
+    # perform attack
     print('adversarial:')
-    validate(model, adv_loader, save=False)
+    cm, acc = validate(model, adv_loader, savemodel=False)
+    # save stuff about adversarial attack
+    deviations = adv_dataset.get_deviation()
+    stats = {'cm': cm, 'acc': acc, 'max_dev': deviations['max'], 'mean_dev': deviations['mean']}
+    print(stats_filename)
+    print(dir)
+    save_json(dir, stats, stats_filename)
+
     print('regular:')
-    validate(model, loader, save=False)
+    validate(model, loader, savemodel=False)
 
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--model_name', default='max')
+    parser.add_argument('--attack_type', default='targeted')
+    parser.add_argument('--perturbation_size', default=1)
+    parser.add_argument('--source_directory', default='models', help='where to find model folders')
+    parser.add_argument('--target_directory', default=None, help='where to save the results of the attack')
+
     args = parser.parse_args()
     main(args)

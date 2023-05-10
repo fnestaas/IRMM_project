@@ -1,5 +1,5 @@
 import torch 
-from model_utils import save_model
+from model_utils import save_model, save_json
 
 def report_acc(y_pred, y):
     """
@@ -29,7 +29,7 @@ def confusion_matrix(y_pred, y, n_lbl=3):
             res[i, j] = torch.where(torch.logical_and(y_pred == i, y == j), 1, 0).sum()
     return res
 
-def validate(model, val_loader, save=True, best=-1, dir=None, data_metadata=None):
+def validate(model, val_loader, savemodel=True,  best=-1, dir=None, data_metadata=None):
     """
     Run validations of the model vs the val_loader
     """
@@ -44,12 +44,14 @@ def validate(model, val_loader, save=True, best=-1, dir=None, data_metadata=None
     y = torch.concat(ys, axis=0)
     acc = report_acc(y_pred, y).item()
     cm = confusion_matrix(y_pred, y)
-    if save and acc > best:
-        best = acc
-        tensor_to_list = lambda x: [x[:, i].tolist() for i in range(x.shape[1])]
-        save_model(model, dir=dir, stats={'acc': acc, 'confusion_matrix': tensor_to_list(cm)}, data_metadata=data_metadata)
-
     # confusion matrix; each column shows the predictions for one label
     print('preds v; ys >')
     print(cm)
-    return best 
+    
+    tensor_to_list = lambda x: [x[:, i].tolist() for i in range(x.shape[1])]
+    cm = tensor_to_list(cm)
+    if acc > best:
+        best = acc
+        if savemodel:
+            save_model(model, dir=dir, stats={'acc': acc, 'confusion_matrix': cm}, data_metadata=data_metadata)
+    return cm, best 

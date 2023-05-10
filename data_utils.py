@@ -130,7 +130,7 @@ class MyDataset(Dataset):
     
     @property
     def class_distribution(self):
-        return {i: torch.sum(torch.where(self.y == i, 1, 0)) for i in range(self.y.max().int() + 1)}
+        return {i: torch.sum(torch.where(self.y == i, 1, 0)).item() for i in range(self.y.max().int() + 1)}
     
 
 class AdvDataset(Dataset):
@@ -144,6 +144,14 @@ class AdvDataset(Dataset):
     
     def __getitem__(self, index):
         return self.images[index], self.ref[index][1]
-
-
+    
+    def get_deviation(self):
+        max_deviations = torch.zeros((len(self.images), ))
+        mean_deviations = torch.zeros((len(self.images), ))
+        for i, (adv, org) in enumerate(zip(self.images, self.ref)):
+            org, _ = org # only data
+            mean_deviations[i] = (torch.abs(adv - org)).mean()
+            max_deviations[i] = (torch.abs(adv - org)).max() # TODO: could it be that these don't actually have the same index?
+        # the mean of the means is the true mean since all data have the same shape
+        return {'mean': mean_deviations.mean().item(), 'max': max_deviations.max().item()}
 

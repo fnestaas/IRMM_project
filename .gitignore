@@ -4,5 +4,8 @@ test_pipeline
 predictive-maintenance
 __pycache__
 *.ipynb
+!report.ipynb
 *.zip
 models/
+IRMM_project/
+experiments/

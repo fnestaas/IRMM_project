@@ -11,14 +11,12 @@ class TakeLast(torch.nn.Module):
     
     def forward(self, x):
         return x[0][:, -1, :]
-    
+
+def save_json(dir, stats, filename='stats.json'):
+    with open(str(dir / filename), "w") as fp:
+        json.dump(stats, fp)
 
 def save_model(model, dir, stats, data_metadata):
-    def as_str(x):
-        # x.mkdir(exist_ok=True, parents=True)
-        return str(x)
-    torch.save(model, as_str(dir / 'model.pth'))
-    with open(as_str(dir / 'stats.json'), "w") as fp:
-        json.dump(stats, fp)
-    with open(as_str(dir / 'data_metadata.json'), "w") as fp:
-        json.dump(data_metadata, fp)
+    torch.save(model, str(dir / 'model.pth'))
+    save_json(dir, stats, 'stats.json')
+    save_json(dir, data_metadata, 'data_metadata.json')

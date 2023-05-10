@@ -14,8 +14,9 @@ from pathlib import Path
 import json 
 from model_utils import TakeLast
 from metrics import * 
+from argparse import ArgumentParser
 
-def train(model, train_loader, criterion, optimizer, n_epochs=100, print_every=5, val_loader=None, dir=None, data_metadata=None):
+def train(model, train_loader, criterion, optimizer, n_epochs=20, print_every=-1, val_loader=None, dir=None, data_metadata=None):
     """
     Training loop and reporting accuracy etc
     Parameters:
@@ -56,29 +57,27 @@ def train(model, train_loader, criterion, optimizer, n_epochs=100, print_every=5
                 report_acc(y_pred, y)
         if val_loader is not None:
             print('validating:')
-            best_acc = validate(model, val_loader, best=best_acc, dir=dir, data_metadata=data_metadata)
+            cm, best_acc = validate(model, val_loader, best=best_acc, dir=dir, data_metadata=data_metadata)
             print('')
 
     model.eval()
 
-def main():
+def main(args):
     now = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
-    dir = Path().cwd() / 'models' / now
+    dir = Path().cwd() / args.target_directory / now
     dir.mkdir(parents=True, exist_ok=True)
 
     directory = cfg('DATA_DIRECTORY')
-    which = 4 # which dataset to load (1, 2, 3 or 4)
-    duration = 100 # duration of time chunks to feed the model
-    pad = False 
-    normalize = True
+    which = int(args.which) # which dataset to load (1, 2, 3 or 4)
+    duration = int(args.duration) # duration of time chunks to feed the model
+    pad = args.pad == 'True' 
+    normalize = args.normalize == 'True'
     data_metadata = {'which': which, 'duration': duration, 'pad': pad, 'normalize': normalize}
     train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize)
     val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize)
 
-    # validate class distributions 
-    print(f'class distribution on the training set: {train_dataset.class_distribution}')
-    print(f'class distribution on the validation set: {val_dataset.class_distribution}')
-    print('')
+    data_metadata['train_distr'] = train_dataset.class_distribution
+    data_metadata['val_distr'] = val_dataset.class_distribution
 
     hs = 128 # LSTM hidden size
     model = LSTM(input_size=train_dataset.n_features, hidden_size=hs, num_layers=2, dropout=.25, batch_first=True)
@@ -92,4 +91,13 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+
+    parser = ArgumentParser()
+    parser.add_argument('--which', default=1, help='which dataset to use')
+    parser.add_argument('--duration', default=150, help='duration of each time series')
+    parser.add_argument('--pad', default='False')
+    parser.add_argument('--normalize', default='True')
+    parser.add_argument('--target_directory', default='models', help='which model directory to use; change between experiments')
+
+    args = parser.parse_args()
+    main(args)
