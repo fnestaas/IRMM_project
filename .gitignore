@@ -8,4 +8,5 @@ __pycache__
 *.zip
 models/
 IRMM_project/
-experiments/
+experiments*/
+plots/

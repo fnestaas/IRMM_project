@@ -43,7 +43,7 @@ def validate(model, val_loader, savemodel=True,  best=-1, dir=None, data_metadat
     y_pred = torch.concat(preds, axis=0)
     y = torch.concat(ys, axis=0)
     acc = report_acc(y_pred, y).item()
-    cm = confusion_matrix(y_pred, y)
+    cm = confusion_matrix(y_pred, y, n_lbl=data_metadata['n_classes'])
     # confusion matrix; each column shows the predictions for one label
     print('preds v; ys >')
     print(cm)

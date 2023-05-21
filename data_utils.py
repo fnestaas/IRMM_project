@@ -16,12 +16,14 @@ class MyDataset(Dataset):
     """
     Custom dataset
     """
-    def __init__(self, data_path, train=True, normalize=True, duration=50, pad=True):
+    def __init__(self, data_path, train=True, normalize=True, duration=50, pad=True, thresholds=None, n_classes=3):
         super().__init__()
         self.path = data_path
         self.train = train
         self.normalize = normalize
         self.pad = pad 
+        self.thresholds = thresholds
+        self.n_classes = n_classes
         self.make_dataset(duration)
     
     def make_dataset(self, duration):
@@ -82,7 +84,10 @@ class MyDataset(Dataset):
         x_engines = [prepare_sample(df, i, duration) for i in pd.unique(df['engine_no'].values)]
         # make labels
         if self.train:
-            class_label = lambda x: int(x > 150) + int(x > 50) # 0 is the "failure" label
+            if self.thresholds is None:
+                # choose thresholds for an even distribution using quantiles
+                self.thresholds = [df['RUL'].quantile(i/self.n_classes) for i in range(1, self.n_classes)]
+            class_label = lambda x: sum([int(x > t)  for t in self.thresholds]) # 0 is the "failure" label # TODO: windowing here
             labels = df['RUL'].apply(class_label)
         
         # convert from pandas to pytorch

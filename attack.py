@@ -25,7 +25,7 @@ from metrics import *
 from torch.nn.functional import one_hot
 
 class UntargetedPGD(nn.Module):
-    def __init__(self, model, eps=1, alpha=.1, noise_std=.1, steps=100, random_start=False, lower=None, upper=None):
+    def __init__(self, model, eps=1, alpha=.1, noise_std=.1, steps=100, random_start=True, lower=None, upper=None, n_classes=3):
         super().__init__()
         self.model = model 
         self.eps = eps 
@@ -35,6 +35,7 @@ class UntargetedPGD(nn.Module):
         self.random_start = random_start
         self.lower = lower 
         self.upper = upper
+        self.n_classes = n_classes
 
     def forward(self, loader):
         """
@@ -43,7 +44,7 @@ class UntargetedPGD(nn.Module):
         def step(input_data, labels):
             input_data.requires_grad = True
             outputs = self.model(input_data)
-            loss = criterion(outputs, one_hot(labels.to(torch.int64), num_classes=3).float())
+            loss = criterion(outputs, one_hot(labels.to(torch.int64), num_classes=self.n_classes).float())
             self.model.zero_grad()
             loss.backward()
             data_grad = input_data.grad.data
@@ -134,24 +135,6 @@ def main(args):
     with open(data_metadata) as f:
         data_metadata = json.load(f)
 
-    # setup
-    which = data_metadata['which']
-    duration = data_metadata['duration']
-    pad = data_metadata['pad']
-    val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad, shuffle=False)
-    loader = DataLoader(val_dataset, batch_size=32)
-
-    # do the attack
-    if attack_type == 'targeted':
-        attacker = TargetedPGD(model, eps=eps)
-    else:
-        attacker = UntargetedPGD(model, eps=eps)
-
-    adv_imgs = attacker(loader)
-    adv_dataset = AdvDataset(adv_imgs, val_dataset)
-    adv_loader = DataLoader(adv_dataset)
-
-    # report accuracies and compare adversarial and normal cases
     # prepare output directory
     if args.target_directory is None:
         stats_filename = 'adv_stats.json' 
@@ -160,14 +143,52 @@ def main(args):
         target_directory.mkdir(exist_ok=True, parents=True)
         stats_filename = args.target_directory + 'adv_stats.json'
 
+    stats_metadata = dir / 'stats.json'
+    with open(stats_metadata) as f:
+        model_stats = json.load(f)
+    cm = model_stats['confusion_matrix']
+    acc = model_stats['acc']
+    # if prediction is constant, don't bother
+    cm_torch = torch.tensor(cm)
+    # check that at least two classes are predicted
+    n_class = cm_torch.sum(axis=1)
+    n_class = torch.where(n_class > 0, 1, 0).sum()
+    n_pred = cm_torch.sum(axis=0)
+    n_pred = torch.where(n_pred > 0, 1, 0).sum()
+    if n_class < 2 or n_pred < 2:
+        print('constant prediction or only one class!')
+        stats = {'cm': cm, 'acc': acc, 'max_dev': 0, 'mean_dev': 0}
+        save_json(dir, stats, stats_filename)
+        exit()
+    else:
+        print(f'valid model: {n_pred=}, {n_class=}')
+    
+    # setup
+    which = data_metadata['which']
+    duration = data_metadata['duration']
+    pad = data_metadata['pad']
+    thresholds = data_metadata['thresholds']
+    n_classes = data_metadata['n_classes']
+    val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad, thresholds=thresholds, n_classes=n_classes)
+    loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+
+    # do the attack
+    if attack_type == 'targeted':
+        attacker = TargetedPGD(model, eps=eps, n_classes=n_classes)
+    else:
+        attacker = UntargetedPGD(model, eps=eps, n_classes=n_classes)
+
+    adv_imgs = attacker(loader)
+    adv_dataset = AdvDataset(adv_imgs, val_dataset)
+    adv_loader = DataLoader(adv_dataset)
+
+    # report accuracies and compare adversarial and normal cases
     # perform attack
     print('adversarial:')
     cm, acc = validate(model, adv_loader, savemodel=False)
     # save stuff about adversarial attack
     deviations = adv_dataset.get_deviation()
     stats = {'cm': cm, 'acc': acc, 'max_dev': deviations['max'], 'mean_dev': deviations['mean']}
-    print(stats_filename)
-    print(dir)
     save_json(dir, stats, stats_filename)
 
     print('regular:')

@@ -36,12 +36,13 @@ def train(model, train_loader, criterion, optimizer, n_epochs=20, print_every=-1
             DataLoader for validation data, or None if we do not want to validate.
     """
     best_acc = -1
+    n_classes = data_metadata['n_classes']
     for epoch in range(n_epochs):
         running_loss = 0
         model.train()
         for i, (x, y) in enumerate(train_loader):
             y_pred = model(x)
-            loss = criterion(y_pred, one_hot(y.to(torch.int64), num_classes=3).float())
+            loss = criterion(y_pred, one_hot(y.to(torch.int64), num_classes=n_classes).float())
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -72,21 +73,27 @@ def main(args):
     duration = int(args.duration) # duration of time chunks to feed the model
     pad = args.pad == 'True' 
     normalize = args.normalize == 'True'
-    data_metadata = {'which': which, 'duration': duration, 'pad': pad, 'normalize': normalize}
-    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize)
-    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize)
+    n_classes = int(args.n_classes)
+    n_epochs = int(args.n_epochs)
+    data_metadata = {'which': which, 'duration': duration, 'pad': pad, 'normalize': normalize, 'n_classes': n_classes}
+    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes)
+    thresholds = train_dataset.thresholds
+    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, thresholds=thresholds, n_classes=n_classes)
 
     data_metadata['train_distr'] = train_dataset.class_distribution
     data_metadata['val_distr'] = val_dataset.class_distribution
+    data_metadata['thresholds'] = val_dataset.thresholds
 
-    hs = 128 # LSTM hidden size
-    model = LSTM(input_size=train_dataset.n_features, hidden_size=hs, num_layers=2, dropout=.25, batch_first=True)
-    model = torch.nn.Sequential(model, TakeLast(), torch.nn.Linear(hs, 3)).double()
+    hs = int(args.hs) # LSTM hidden size
+    num_layers = int(args.num_layers)
+    dropout = float(args.dropout)
+    model = LSTM(input_size=train_dataset.n_features, hidden_size=hs, num_layers=num_layers, dropout=dropout, batch_first=True)
+    model = torch.nn.Sequential(model, TakeLast(), torch.nn.Linear(hs, n_classes)).double()
     train_loader = DataLoader(train_dataset, batch_size=32)
     val_loader = DataLoader(val_dataset, batch_size=32)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = Adam(model.parameters(), lr=1e-3)
-    train(model, train_loader, criterion, optimizer, val_loader=val_loader, dir=dir, data_metadata=data_metadata)
+    train(model, train_loader, criterion, optimizer, val_loader=val_loader, dir=dir, data_metadata=data_metadata, n_epochs=n_epochs)
 
 
 
@@ -98,6 +105,11 @@ if __name__ == '__main__':
     parser.add_argument('--pad', default='False')
     parser.add_argument('--normalize', default='True')
     parser.add_argument('--target_directory', default='models', help='which model directory to use; change between experiments')
+    parser.add_argument('--n_classes', default=3)
+    parser.add_argument('--n_epochs', default=20)
+    parser.add_argument('--hs', default=128, help='hidden size LSTM')
+    parser.add_argument('--num_layers', default=2, help='number of LSTM layers')
+    parser.add_argument('--dropout', default=.25)
 
     args = parser.parse_args()
     main(args)
