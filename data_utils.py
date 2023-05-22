@@ -99,7 +99,8 @@ class MyDataset(Dataset):
         cumulative_len = 0
         y0 = []
         if self.pad: # pad the signal
-            offset = duration//2 # duration //2 means we take the label in the middle
+            # offset = duration//2 # duration //2 means we take the label in the middle
+            offset = duration - 1
             for l in lens:
                 targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
                 y0.append(targets[offset::duration]) # take the offset-th label of each block of size duration
@@ -154,7 +155,7 @@ class AdvDataset(Dataset):
         max_deviations = torch.zeros((len(self.images), ))
         mean_deviations = torch.zeros((len(self.images), ))
         for i, (adv, org) in enumerate(zip(self.images, self.ref)):
-            org, _ = org # only data
+            org, j = org # only data
             mean_deviations[i] = (torch.abs(adv - org)).mean()
             max_deviations[i] = (torch.abs(adv - org)).max() # TODO: could it be that these don't actually have the same index?
         # the mean of the means is the true mean since all data have the same shape
