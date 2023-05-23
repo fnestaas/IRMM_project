@@ -183,7 +183,9 @@ def main(args):
     pad = data_metadata['pad']
     thresholds = data_metadata['thresholds']
     n_classes = data_metadata['n_classes']
-    val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad, thresholds=thresholds, n_classes=n_classes)
+    mean = data_metadata['mean']
+    std = data_metadata['std']
+    val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad, thresholds=thresholds, n_classes=n_classes, mean=mean, std=std)
     loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
     # do the attack

@@ -7,16 +7,17 @@ def moving_avg(df: pd.DataFrame, alpha=.25):
     """
     Exponential moving average to smoothen the signal
     """
-    tmp = df.set_index('engine_no').sort_index()
-    tmp = tmp.ewm(alpha=alpha).mean()
+    assert len(df['engine_no'].unique()) == 1, 'multiple engines in same smoothing!'
+    # tmp = df.set_index('engine_no').sort_index()
+    tmp = df.ewm(alpha=alpha).mean()
 
-    return tmp.reset_index()
+    return tmp.reset_index(drop=True)
 
 class MyDataset(Dataset):
     """
     Custom dataset
     """
-    def __init__(self, data_path, train=True, normalize=True, duration=50, pad=True, thresholds=None, n_classes=3):
+    def __init__(self, data_path, train=True, normalize=True, duration=50, pad=True, thresholds=None, n_classes=3, smoothing=.25, mean=None, std=None):
         super().__init__()
         self.path = data_path
         self.train = train
@@ -24,6 +25,9 @@ class MyDataset(Dataset):
         self.pad = pad 
         self.thresholds = thresholds
         self.n_classes = n_classes
+        self.alpha = smoothing
+        self.mean = mean if mean is None else pd.Series(mean) # pd.DataFrame({k: [v] for k, v in mean.items()})
+        self.std = std if std is None else pd.Series(std) # pd.DataFrame({k: [v] for k, v in std.items()})
         self.make_dataset(duration)
     
     def make_dataset(self, duration):
@@ -48,7 +52,7 @@ class MyDataset(Dataset):
             n_chunks = len(df) // duration + int(mod != 0)
             if n_chunks > 1:
                 skip = (l - duration) / (n_chunks - 1) 
-                new_df = pd.concat([df[int(i*skip): int(i*skip) + duration] for i in range(n_chunks)], axis=0)
+                new_df = pd.concat([moving_avg(df[int(i*skip): int(i*skip) + duration], alpha=self.alpha) for i in range(n_chunks)], axis=0)
             else:
                 new_df = pad_df(df.copy(), duration)
             return new_df
@@ -61,20 +65,28 @@ class MyDataset(Dataset):
             - pad if necessary (TODO: we could also implement random selection instead of splitting the data into chunks of size duration)
             """
             x = df.where(df['engine_no'] == i).dropna()
-            x = x.drop(columns=['RUL', 'time_in_cycles', 'index', 'Unnamed: 0'], inplace=False) 
-            x = moving_avg(x)
+            x = x.drop(columns=['RUL', 'time_in_cycles', 'index', 'Unnamed: 0'], inplace=False, errors='ignore') 
+            # x = moving_avg(x) # this has to happen per sample...
             if self.pad:
                 x = pad_df(x, duration)
             else:
                 x = shift_to_fit(x, duration)
             retval = torch.tensor(x.to_numpy())
+
+            # if self.normalize: retval = (retval -retval.mean()) / retval.std()
+
             return retval.reshape((-1, duration, x.shape[-1]))
+            
         
         df = pd.read_csv(self.path)
         
         if self.normalize: 
             rul = df['RUL'] # don't normalize the label
-            df = (df - df.mean()) / df.std()
+            if self.mean is None: self.mean = df.mean()
+            if self.std is None: self.std = df.std()
+            self.mean = self.mean[df.columns]
+            self.std = self.std[df.columns]
+            df = (df - self.mean) / self.std
             # df = (df - m) / (M - m)
             df['RUL'] = rul
 
@@ -82,6 +94,7 @@ class MyDataset(Dataset):
         lens = [len(df.where(df['engine_no'] == i).dropna()) for i in pd.unique(df['engine_no'].values)]
         # make per-engine samples
         x_engines = [prepare_sample(df, i, duration) for i in pd.unique(df['engine_no'].values)]
+
         # make labels
         if self.train:
             if self.thresholds is None:
@@ -100,7 +113,7 @@ class MyDataset(Dataset):
         y0 = []
         if self.pad: # pad the signal
             # offset = duration//2 # duration //2 means we take the label in the middle
-            offset = duration - 1
+            offset = duration - 1 # take the final label
             for l in lens:
                 targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
                 y0.append(targets[offset::duration]) # take the offset-th label of each block of size duration
@@ -110,10 +123,12 @@ class MyDataset(Dataset):
                 cumulative_len = cumulative_len + l
         else:
             for l in lens: # the counterpart to shift_to_fit for y
+                # instead of padding, we split the signal into segments all containing data, but which potentially overlap
                 mod = l % duration
                 n_chunks = l //duration + int(mod != 0)
-                skip = 0 if l <= duration else (l - duration) / (n_chunks - 1) 
-                offset = int(skip // 2)
+                skip = 0 if l <= duration else (l - duration) / (n_chunks - 1) # the distance between the start of each frame
+                # offset = int(skip // 2) # if offset is skip // 2, then we take the label in the middle of the frame. 
+                offset = int(skip - 1) # take the final label of each frame
                 targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
                 cumulative_len = cumulative_len + l
                 if n_chunks == 1 and l-1 < offset: # short frame
@@ -137,6 +152,12 @@ class MyDataset(Dataset):
     @property
     def class_distribution(self):
         return {i: torch.sum(torch.where(self.y == i, 1, 0)).item() for i in range(self.y.max().int() + 1)}
+
+    def get_mean(self):
+        return self.mean.to_dict()
+    
+    def get_std(self):
+        return self.std.to_dict()
     
 
 class AdvDataset(Dataset):
@@ -152,6 +173,7 @@ class AdvDataset(Dataset):
         return self.images[index], self.ref[index][1]
     
     def get_deviation(self):
+        # does not work properly, but the attacks themselves still seem to be fine 
         max_deviations = torch.zeros((len(self.images), ))
         mean_deviations = torch.zeros((len(self.images), ))
         for i, (adv, org) in enumerate(zip(self.images, self.ref)):

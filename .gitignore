@@ -9,8 +9,10 @@ __pycache__
 models/
 IRMM_project/
 experiments*/
-plots/
 five_classes/
 three_classes/
 three_classes_2/
 launch*
+add_test_rul/
+fixed_smoothing*
+debug*

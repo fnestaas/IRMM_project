@@ -78,11 +78,15 @@ def main(args):
     data_metadata = {'which': which, 'duration': duration, 'pad': pad, 'normalize': normalize, 'n_classes': n_classes}
     train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes)
     thresholds = train_dataset.thresholds
-    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, thresholds=thresholds, n_classes=n_classes)
+    mean = train_dataset.get_mean() 
+    std = train_dataset.get_std()
+    val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, thresholds=thresholds, n_classes=n_classes, mean=mean, std=std)
 
     data_metadata['train_distr'] = train_dataset.class_distribution
     data_metadata['val_distr'] = val_dataset.class_distribution
     data_metadata['thresholds'] = val_dataset.thresholds
+    data_metadata['mean'] = mean 
+    data_metadata['std'] = std 
 
     hs = int(args.hs) # LSTM hidden size
     num_layers = int(args.num_layers)

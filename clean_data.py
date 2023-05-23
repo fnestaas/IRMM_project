@@ -20,6 +20,14 @@ def add_rul(g):
     del g['engine_no']
     return g.reset_index()
 
+def make_rul_test(df, rul):
+    lens = [len(df[df['engine_no'] == i].dropna()) for i in pd.unique(df['engine_no'].values)]
+    ruls = [[rul.iloc[i]]* lens[i] for i in range(len(lens))]
+    res = []
+    for r in ruls: res.extend(r)
+    ruls = pd.DataFrame(res, columns=['RUL'])
+    return ruls
+
 if __name__ == '__main__':
     source_path = cfg('SOURCE_DIRECTORY')
     target_directory = cfg('DATA_DIRECTORY')
@@ -59,6 +67,9 @@ if __name__ == '__main__':
         chosen_dataset = f'FD00{i}'
         df = clean_df(data_dictionnary[chosen_dataset]['df_train'].copy())
         df_eval = clean_df(data_dictionnary[chosen_dataset]['df_test'].copy())
+        rul_test = make_rul_test(df_eval, data_dictionnary[chosen_dataset]['RUL_test'].copy())
+        df_eval['RUL'] = rul_test.reset_index(drop=True)
         assert all([c1 in df_eval.columns for c1 in df.columns if not (c1 in ['RUL', 'index'])]), f'failed at dataset {i}'
+        assert all([c1 in df.columns for c1 in df_eval.columns if not (c1 in ['RUL', 'index'])]), f'failed at dataset {i}'
         df.to_csv(f'{target_directory}/train_{i}.csv', index=False)
         df_eval.to_csv(f'{target_directory}/test_{i}.csv', index=False)
