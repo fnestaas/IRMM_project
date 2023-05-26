@@ -17,9 +17,10 @@ class MyDataset(Dataset):
     """
     Custom dataset
     """
-    def __init__(self, data_path, train=True, normalize=True, duration=50, pad=True, thresholds=None, n_classes=3, smoothing=.25, mean=None, std=None):
+    def __init__(self, data_path, train=True, normalize=True, duration=50, pad=True, thresholds=None, n_classes=3, smoothing=.25, mean=None, std=None, skip_chunk=10, df=None):
         super().__init__()
         self.path = data_path
+        self.df = df 
         self.train = train
         self.normalize = normalize
         self.pad = pad 
@@ -28,6 +29,8 @@ class MyDataset(Dataset):
         self.alpha = smoothing
         self.mean = mean if mean is None else pd.Series(mean) # pd.DataFrame({k: [v] for k, v in mean.items()})
         self.std = std if std is None else pd.Series(std) # pd.DataFrame({k: [v] for k, v in std.items()})
+        self.skip_chunk = skip_chunk
+        self.duration = duration 
         self.make_dataset(duration)
     
     def make_dataset(self, duration):
@@ -40,6 +43,7 @@ class MyDataset(Dataset):
             l = (len(df) // duration) * duration 
             if l != len(df):
                 df = pd.concat([df, pd.DataFrame(np.zeros((duration - len(df) % duration, df.shape[-1])), columns=df.columns)], axis=0)
+                df['engine_no'] = df['engine_no'].iloc[0]
             return df 
         
         def shift_to_fit(df, duration):
@@ -54,9 +58,15 @@ class MyDataset(Dataset):
                 skip = (l - duration) / (n_chunks - 1) 
                 new_df = pd.concat([moving_avg(df[int(i*skip): int(i*skip) + duration], alpha=self.alpha) for i in range(n_chunks)], axis=0)
             else:
-                new_df = pad_df(df.copy(), duration)
+                new_df = moving_avg(pad_df(df.copy(), duration), alpha=self.alpha)
             return new_df
         
+        def prep_test(df, duration, chunk):
+            N = (len(df) - duration) // chunk
+            if N > 0: new_df = pd.concat([moving_avg(df.iloc[i*chunk: i*chunk + duration], alpha=self.alpha) for i in range(N)], axis=0)
+            else: new_df = moving_avg(pad_df(df.copy(), duration), alpha=self.alpha)
+            return new_df
+
         def prepare_sample(df, i, duration):
             """
             Take one engine i and 
@@ -70,7 +80,8 @@ class MyDataset(Dataset):
             if self.pad:
                 x = pad_df(x, duration)
             else:
-                x = shift_to_fit(x, duration)
+                if self.train: x = shift_to_fit(x, duration)
+                else: x = prep_test(x, duration, self.skip_chunk)
             retval = torch.tensor(x.to_numpy())
 
             # if self.normalize: retval = (retval -retval.mean()) / retval.std()
@@ -78,7 +89,8 @@ class MyDataset(Dataset):
             return retval.reshape((-1, duration, x.shape[-1]))
             
         
-        df = pd.read_csv(self.path)
+        if self.df is None: df = pd.read_csv(self.path)
+        else: df = self.df 
         
         if self.normalize: 
             rul = df['RUL'] # don't normalize the label
@@ -92,16 +104,20 @@ class MyDataset(Dataset):
 
         # we will need the lengths of the time series for each engine to recover the label
         lens = [len(df.where(df['engine_no'] == i).dropna()) for i in pd.unique(df['engine_no'].values)]
+        self.lens = lens
         # make per-engine samples
         x_engines = [prepare_sample(df, i, duration) for i in pd.unique(df['engine_no'].values)]
 
         # make labels
-        if self.train:
-            if self.thresholds is None:
-                # choose thresholds for an even distribution using quantiles
-                self.thresholds = [df['RUL'].quantile(i/self.n_classes) for i in range(1, self.n_classes)]
-            class_label = lambda x: sum([int(x > t)  for t in self.thresholds]) # 0 is the "failure" label # TODO: windowing here
-            labels = df['RUL'].apply(class_label)
+        if self.thresholds is None:
+            # choose thresholds for an even distribution using quantiles
+            self.thresholds = [df['RUL'].quantile(i/self.n_classes) for i in range(1, self.n_classes)]
+        elif isinstance(self.thresholds, float):
+            divisor = self.thresholds
+            self.thresholds = [df['RUL'].quantile(i/self.n_classes / divisor) for i in range(1, self.n_classes)] # more classes around the failure state
+        else: assert isinstance(self.thresholds, list), f'dataset not implemented for {self.thresholds=}'
+        class_label = lambda x: sum([int(x > t)  for t in self.thresholds]) # 0 is the "failure" label # TODO: windowing here
+        labels = df['RUL'].apply(class_label)
         
         # convert from pandas to pytorch
         self.x = torch.concat(x_engines, axis=0).double()
@@ -122,19 +138,29 @@ class MyDataset(Dataset):
                     y0.append([0])
                 cumulative_len = cumulative_len + l
         else:
-            for l in lens: # the counterpart to shift_to_fit for y
-                # instead of padding, we split the signal into segments all containing data, but which potentially overlap
-                mod = l % duration
-                n_chunks = l //duration + int(mod != 0)
-                skip = 0 if l <= duration else (l - duration) / (n_chunks - 1) # the distance between the start of each frame
-                # offset = int(skip // 2) # if offset is skip // 2, then we take the label in the middle of the frame. 
-                offset = int(skip - 1) # take the final label of each frame
-                targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
-                cumulative_len = cumulative_len + l
-                if n_chunks == 1 and l-1 < offset: # short frame
-                    y0.append([0])
-                else:
-                    y0.append([targets[offset + int(i*skip)] for i in range(n_chunks)]) # take the offset-th label of each block of size duration
+            if self.train:
+                for l in lens: # the counterpart to shift_to_fit for y
+                    # instead of padding, we split the signal into segments all containing data, but which potentially overlap
+                    mod = l % duration
+                    n_chunks = l //duration + int(mod != 0)
+                    skip = 0 if l <= duration else (l - duration) / (n_chunks - 1) # the distance between the start of each frame
+                    # offset = int(skip // 2) # if offset is skip // 2, then we take the label in the middle of the frame. 
+                    offset = int(skip - 1) # take the final label of each frame
+                    targets = labels[cumulative_len:cumulative_len + l]  #relevant labels
+                    cumulative_len = cumulative_len + l
+                    if n_chunks == 1 and l-1 < offset: # short frame
+                        y0.append([0])
+                    else:
+                        y0.append([targets[offset + int(i*skip)] for i in range(n_chunks)]) # take the offset-th label of each block of size duration
+            else:
+                # prepare a test dataset by skipping a fixed length each time
+                for l in lens:
+                    if l < duration:
+                        y0.append([0])
+                    else:
+                        N = (l - duration) // self.skip_chunk
+                        y0.append([labels[cumulative_len + i*self.skip_chunk + duration - 1] for i in range(N)])
+                    cumulative_len += l
 
         y = []
         for l in y0:
@@ -159,6 +185,21 @@ class MyDataset(Dataset):
     def get_std(self):
         return self.std.to_dict()
     
+    def map_id_to_engine_time(self, id):
+        """
+        given an id in the dataset, map it to the correct engine and time for that time series 
+        """
+        if self.train or self.pad: raise NotImplementedError('map_id_to_engine is only available for test data with pad==False')
+        cum_idx = 0
+        for i, l in enumerate(self.lens):
+            skip = 1 if l < self.duration else (l - self.duration) // self.skip_chunk
+            cum_idx += skip
+            if id < cum_idx:
+                engine = i 
+                idx = id - (cum_idx - skip)
+                return (engine, idx)
+
+
 
 class AdvDataset(Dataset):
     def __init__(self, images, ref_dataset):
@@ -182,4 +223,43 @@ class AdvDataset(Dataset):
             max_deviations[i] = (torch.abs(adv - org)).max() # TODO: could it be that these don't actually have the same index?
         # the mean of the means is the true mean since all data have the same shape
         return {'mean': mean_deviations.mean().item(), 'max': max_deviations.max().item()}
+
+    def get_incorrect(self, adv_preds, preds, max_examples=10):
+        """
+        if pred was correct, find the up to max_examples signals which tripped up the model
+        """
+        if preds.dim() > 1:
+            preds = torch.argmax(preds, axis=1)
+        if adv_preds.dim() > 1:
+            adv_preds = torch.argmax(adv_preds, axis=1)
+        id_correct = [i for i, (p, y) in enumerate(zip(preds, self.ref.y)) if p == y] # correct predictions
+        id_different = [i for i, (p, y) in enumerate(zip(adv_preds, preds)) if p != y] # changed by adversary
+        # we want the intersection of these two:
+        ids = [i for i in range(len(self)) if i in id_correct and i in id_different][:max_examples]
+        if len(ids) == 0: return None, None, None, None
+        return torch.stack(
+                [self.images[i] for i in ids]
+            ), torch.stack(
+                [self.ref[i][0] for i in ids]
+            ), torch.stack(
+                [adv_preds[i] for i in ids]
+            ), torch.stack(
+                [preds[i] for i in ids]
+            ), torch.tensor(
+                ids
+            ) 
+
+    def save_incorrect(self, adv_preds, preds, max_examples=10, dir=None, ids_only=False):
+        examples, ref, adv_lbl, lbl, ids = self.get_incorrect(adv_preds, preds, max_examples)
+        if examples is None: return False
+        dir.mkdir(exist_ok=True, parents=True)
+        if not ids_only:
+            torch.save(examples, dir / 'examples.pt')
+            torch.save(ref, dir / 'ref.pt')
+        torch.save(adv_lbl, dir / 'adv_lbl.pt')
+        torch.save(lbl, dir / 'lbl.pt')
+        torch.save(ids, dir/ 'ids.pt')
+        ids_times = torch.stack([torch.tensor(self.ref.map_id_to_engine_time(i)) for i in ids])
+        torch.save(ids_times, dir/'ids_times.pt')
+
 

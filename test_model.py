@@ -29,7 +29,6 @@ def main(args):
     std = data_metadata['std']
 
     test_data = MyDataset(f'{directory}/test_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes, thresholds=thresholds, mean=mean, std=std)
-    # test_data = MyDataset(f'{directory}/test_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes, thresholds=thresholds)
     test_loader = DataLoader(test_data, batch_size=32)
 
     val_data = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes, thresholds=thresholds, mean=mean, std=std)

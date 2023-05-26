@@ -113,13 +113,14 @@ class TargetedPGD(UntargetedPGD):
         perturbed = []
         
         for data, labels in loader:
+            org_data = data.clone().detach()
             if self.random_start:
                 data = data + torch.normal(torch.zeros(data.shape), self.std)
             labels = select_label(labels)
             pert_data = step(data, labels)
             for _ in range(self.steps):
                 pert_data = step(pert_data, labels)
-            pert_data = torch.clamp(pert_data, min=data-self.eps, max=data+self.eps)
+            pert_data = torch.clamp(pert_data, min=org_data-self.eps, max=org_data+self.eps)
 
             perturbed.append(pert_data)
                 
@@ -136,6 +137,7 @@ def main(args):
     model_name = args.model_name # which model to use
     attack_type = args.attack_type
     eps = float(args.perturbation_size)
+    validation_data = args.validation_data == 'True'
     dir = Path().cwd() / args.source_directory # directory containing the models
     model_name = choose_model(dir, model_name)
     dir = dir / model_name # the directory of the model to use
@@ -185,7 +187,10 @@ def main(args):
     n_classes = data_metadata['n_classes']
     mean = data_metadata['mean']
     std = data_metadata['std']
-    val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad, thresholds=thresholds, n_classes=n_classes, mean=mean, std=std)
+    if validation_data:
+        val_dataset = MyDataset(f'{data_directory}/val_engines_{which}.csv', duration=duration, pad=pad, thresholds=thresholds, n_classes=n_classes, mean=mean, std=std)
+    else:
+        val_dataset = MyDataset(f'{data_directory}/test_{which}.csv', duration=duration, pad=pad, thresholds=thresholds, n_classes=n_classes, mean=mean, std=std, train=False)
     loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
     # do the attack
@@ -203,14 +208,18 @@ def main(args):
     # report accuracies and compare adversarial and normal cases
     # perform attack
     print('adversarial:')
-    cm, acc = validate(model, adv_loader, savemodel=False, data_metadata=data_metadata)
+    cm, acc, adv_preds = validate(model, adv_loader, savemodel=False, data_metadata=data_metadata, return_preds=True)
     # save stuff about adversarial attack
     deviations = adv_dataset.get_deviation()
     stats = {'cm': cm, 'acc': acc, 'max_dev': deviations['max'], 'mean_dev': deviations['mean']}
     save_json(dir, stats, stats_filename)
 
     print('regular:')
-    validate(model, loader, savemodel=False, data_metadata=data_metadata)
+    cm, acc, preds = validate(model, loader, savemodel=False, data_metadata=data_metadata, return_preds=True)
+    
+    # save also those signals which were predicted incorrectly because of the attack
+    adv_dataset.save_incorrect(adv_preds, preds, dir=target_directory / 'examples', max_examples=-1, ids_only=True)
+
 
 if __name__ == '__main__':
     parser = ArgumentParser()
@@ -220,6 +229,7 @@ if __name__ == '__main__':
     parser.add_argument('--source_directory', default='models', help='where to find model folders')
     parser.add_argument('--target_directory', default=None, help='where to save the results of the attack')
     parser.add_argument('--preference', default=None, help='label to aim for in attack (or "increase" or "decrease")')
+    parser.add_argument('--validation_data', default='True', help='whether to use validation data. Otherwise, uses test data.')
 
     args = parser.parse_args()
     main(args)

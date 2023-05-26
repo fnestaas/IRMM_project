@@ -16,3 +16,6 @@ launch*
 add_test_rul/
 fixed_smoothing*
 debug*
+use_test_data/
+sequential/
+test_set_from_training_data/

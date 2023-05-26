@@ -75,8 +75,10 @@ def main(args):
     normalize = args.normalize == 'True'
     n_classes = int(args.n_classes)
     n_epochs = int(args.n_epochs)
+    thresholds = args.thresholds if args.thresholds is None else float(args.thresholds)
+
     data_metadata = {'which': which, 'duration': duration, 'pad': pad, 'normalize': normalize, 'n_classes': n_classes}
-    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes)
+    train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes, thresholds=thresholds)
     thresholds = train_dataset.thresholds
     mean = train_dataset.get_mean() 
     std = train_dataset.get_std()
@@ -114,6 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--hs', default=128, help='hidden size LSTM')
     parser.add_argument('--num_layers', default=2, help='number of LSTM layers')
     parser.add_argument('--dropout', default=.25)
+    parser.add_argument('--thresholds', default=None)
 
     args = parser.parse_args()
     main(args)

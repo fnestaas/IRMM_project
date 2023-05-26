@@ -22,7 +22,7 @@ def add_rul(g):
 
 def make_rul_test(df, rul):
     lens = [len(df[df['engine_no'] == i].dropna()) for i in pd.unique(df['engine_no'].values)]
-    ruls = [[rul.iloc[i]]* lens[i] for i in range(len(lens))]
+    ruls = [[rul.iloc[i] + l - 1 - j for j in range(l)] for i, l in enumerate(lens)]
     res = []
     for r in ruls: res.extend(r)
     ruls = pd.DataFrame(res, columns=['RUL'])

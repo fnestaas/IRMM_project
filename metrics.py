@@ -29,7 +29,7 @@ def confusion_matrix(y_pred, y, n_lbl=3):
             res[i, j] = torch.where(torch.logical_and(y_pred == i, y == j), 1, 0).sum()
     return res
 
-def validate(model, val_loader, savemodel=True,  best=-1, dir=None, data_metadata=None):
+def validate(model, val_loader, savemodel=True,  best=-1, dir=None, data_metadata=None, return_preds=False):
     """
     Run validations of the model vs the val_loader
     """
@@ -54,4 +54,7 @@ def validate(model, val_loader, savemodel=True,  best=-1, dir=None, data_metadat
         best = acc
         if savemodel:
             save_model(model, dir=dir, stats={'acc': acc, 'confusion_matrix': cm}, data_metadata=data_metadata)
-    return cm, best 
+    if not return_preds:
+        return cm, best 
+    else:
+        return cm, best, y_pred
