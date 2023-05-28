@@ -75,7 +75,7 @@ def main(args):
     normalize = args.normalize == 'True'
     n_classes = int(args.n_classes)
     n_epochs = int(args.n_epochs)
-    thresholds = args.thresholds if args.thresholds is None else float(args.thresholds)
+    thresholds = args.thresholds
 
     data_metadata = {'which': which, 'duration': duration, 'pad': pad, 'normalize': normalize, 'n_classes': n_classes}
     train_dataset = MyDataset(f'{directory}/train_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, n_classes=n_classes, thresholds=thresholds)
@@ -85,6 +85,7 @@ def main(args):
     val_dataset = MyDataset(f'{directory}/val_engines_{which}.csv', duration=duration, pad=pad, normalize=normalize, thresholds=thresholds, n_classes=n_classes, mean=mean, std=std)
 
     data_metadata['train_distr'] = train_dataset.class_distribution
+    weight = torch.tensor([len(train_dataset) / max([1, n]) for n in data_metadata['train_distr'].values()]).sqrt()
     data_metadata['val_distr'] = val_dataset.class_distribution
     data_metadata['thresholds'] = val_dataset.thresholds
     data_metadata['mean'] = mean 
@@ -97,7 +98,7 @@ def main(args):
     model = torch.nn.Sequential(model, TakeLast(), torch.nn.Linear(hs, n_classes)).double()
     train_loader = DataLoader(train_dataset, batch_size=32)
     val_loader = DataLoader(val_dataset, batch_size=32)
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss(weight=weight)
     optimizer = Adam(model.parameters(), lr=1e-3)
     train(model, train_loader, criterion, optimizer, val_loader=val_loader, dir=dir, data_metadata=data_metadata, n_epochs=n_epochs)
 

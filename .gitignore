@@ -19,3 +19,6 @@ debug*
 use_test_data/
 sequential/
 test_set_from_training_data/
+tighter_classes/
+IRMM_project/
+model.pth

@@ -1,5 +1,5 @@
 """
-Test the model using consecutive preds
+Test the model using consecutive preds. Save the sequence of predictions to model directory
 """
 
 from argparse import ArgumentParser

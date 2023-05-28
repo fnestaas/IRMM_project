@@ -172,7 +172,7 @@ def main(args):
     n_pred = cm_torch.sum(axis=0)
     n_pred = torch.where(n_pred > 0, 1, 0).sum()
     if n_class < 2 or n_pred < 2:
-        print('constant prediction or only one class!')
+        print(f'constant prediction or only one class! {cm_torch}')
         stats = {'cm': cm, 'acc': acc, 'max_dev': 0, 'mean_dev': 0}
         save_json(dir, stats, stats_filename)
         exit()
@@ -201,8 +201,13 @@ def main(args):
     else:
         attacker = UntargetedPGD(model, eps=eps, n_classes=n_classes)
 
-    adv_imgs = attacker(loader)
-    adv_dataset = AdvDataset(adv_imgs, val_dataset)
+    if eps > 1e-4: 
+        adv_imgs = attacker(loader)
+        adv_dataset = AdvDataset(adv_imgs, val_dataset)
+        deviations = adv_dataset.get_deviation()
+    else:
+        adv_dataset = val_dataset
+        deviations = {'max': 0., 'mean': 0.}
     adv_loader = DataLoader(adv_dataset)
 
     # report accuracies and compare adversarial and normal cases
@@ -210,15 +215,15 @@ def main(args):
     print('adversarial:')
     cm, acc, adv_preds = validate(model, adv_loader, savemodel=False, data_metadata=data_metadata, return_preds=True)
     # save stuff about adversarial attack
-    deviations = adv_dataset.get_deviation()
     stats = {'cm': cm, 'acc': acc, 'max_dev': deviations['max'], 'mean_dev': deviations['mean']}
     save_json(dir, stats, stats_filename)
 
     print('regular:')
     cm, acc, preds = validate(model, loader, savemodel=False, data_metadata=data_metadata, return_preds=True)
     
-    # save also those signals which were predicted incorrectly because of the attack
-    adv_dataset.save_incorrect(adv_preds, preds, dir=target_directory / 'examples', max_examples=-1, ids_only=True)
+    if eps > 1e-4:
+        # save also those signals which were predicted incorrectly because of the attack
+        adv_dataset.save_incorrect(adv_preds, preds, dir=target_directory / 'examples', max_examples=-1, ids_only=True)
 
 
 if __name__ == '__main__':

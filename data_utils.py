@@ -38,19 +38,20 @@ class MyDataset(Dataset):
         Takes the data path (and other information provided in __init__) to make a dataset. 
         The dataset consists of time blocks of the specified duration, and smoothens the signal
         """
-        def pad_df(df, duration):
+        def pad_df(df):
             # pad the df into chunks of size duration, padding the last df if neccessary 
+            duration = self.duration
             l = (len(df) // duration) * duration 
             if l != len(df):
                 df = pd.concat([df, pd.DataFrame(np.zeros((duration - len(df) % duration, df.shape[-1])), columns=df.columns)], axis=0)
                 df['engine_no'] = df['engine_no'].iloc[0]
             return df 
         
-        def shift_to_fit(df, duration):
+        def shift_to_fit(df):
             """
-            TODO: wrong if l is divisible by duration
             Instead of padding, repeat parts of the dataframe to make it divisible by duration
             """
+            duration = self.duration
             l = len(df)
             mod = l % duration
             n_chunks = len(df) // duration + int(mod != 0)
@@ -58,40 +59,52 @@ class MyDataset(Dataset):
                 skip = (l - duration) / (n_chunks - 1) 
                 new_df = pd.concat([moving_avg(df[int(i*skip): int(i*skip) + duration], alpha=self.alpha) for i in range(n_chunks)], axis=0)
             else:
-                new_df = moving_avg(pad_df(df.copy(), duration), alpha=self.alpha)
+                new_df = moving_avg(pad_df(df.copy()), alpha=self.alpha)
             return new_df
         
-        def prep_test(df, duration, chunk):
+        def prep_test(df):
+            duration = self.duration
+            chunk = self.skip_chunk
             N = (len(df) - duration) // chunk
-            if N > 0: new_df = pd.concat([moving_avg(df.iloc[i*chunk: i*chunk + duration], alpha=self.alpha) for i in range(N)], axis=0)
-            else: new_df = moving_avg(pad_df(df.copy(), duration), alpha=self.alpha)
+            if N > 0: 
+                new_df = pd.concat([moving_avg(df.iloc[i*chunk: i*chunk + duration], alpha=self.alpha) for i in range(N)], axis=0)
+            else: 
+                # we only take the first duration samples because we want to ignore chunk size for short frames
+                new_df = moving_avg(pad_df(df.copy())[:duration], alpha=self.alpha)
             return new_df
 
-        def prepare_sample(df, i, duration):
+        def prepare_sample(df, i):
             """
             Take one engine i and 
             - smoothen the signal
             - make blocks of duration duration (can be helpful if we want to predict on short time windows)
             - pad if necessary (TODO: we could also implement random selection instead of splitting the data into chunks of size duration)
             """
+            duration = self.duration
             x = df.where(df['engine_no'] == i).dropna()
             x = x.drop(columns=['RUL', 'time_in_cycles', 'index', 'Unnamed: 0'], inplace=False, errors='ignore') 
-            # x = moving_avg(x) # this has to happen per sample...
             if self.pad:
-                x = pad_df(x, duration)
+                x = pad_df(x)
             else:
-                if self.train: x = shift_to_fit(x, duration)
-                else: x = prep_test(x, duration, self.skip_chunk)
+                if self.train: x = shift_to_fit(x)
+                else: x = prep_test(x)
+            l_x = len(x)
+            assert l_x % duration == 0, f'got invalid length of x: sample {i}, len(x): {l_x}'
             retval = torch.tensor(x.to_numpy())
 
-            # if self.normalize: retval = (retval -retval.mean()) / retval.std()
-
-            return retval.reshape((-1, duration, x.shape[-1]))
-            
+            return retval.reshape((-1, duration, x.shape[-1])) # each element corresponds to one sample
         
+        # def check_lens(lens, x_engines):
+        #     for i, (l, engine) in enumerate(zip(lens, x_engines)):
+        #         if l >= self.duration:
+        #             assert len(engine) // 
+            
+        # load data and make sure order is correct
         if self.df is None: df = pd.read_csv(self.path)
         else: df = self.df 
         
+        df = df.sort_values(by=['engine_no', 'RUL'], ascending=[True, False])
+
         if self.normalize: 
             rul = df['RUL'] # don't normalize the label
             if self.mean is None: self.mean = df.mean()
@@ -106,17 +119,19 @@ class MyDataset(Dataset):
         lens = [len(df.where(df['engine_no'] == i).dropna()) for i in pd.unique(df['engine_no'].values)]
         self.lens = lens
         # make per-engine samples
-        x_engines = [prepare_sample(df, i, duration) for i in pd.unique(df['engine_no'].values)]
+        x_engines = [prepare_sample(df, i) for i in pd.unique(df['engine_no'].values)]
+        # check_lens(lens, x_engines)
 
         # make labels
         if self.thresholds is None:
             # choose thresholds for an even distribution using quantiles
             self.thresholds = [df['RUL'].quantile(i/self.n_classes) for i in range(1, self.n_classes)]
-        elif isinstance(self.thresholds, float):
-            divisor = self.thresholds
-            self.thresholds = [df['RUL'].quantile(i/self.n_classes / divisor) for i in range(1, self.n_classes)] # more classes around the failure state
+        elif isinstance(self.thresholds, str):
+            self.thresholds = self.thresholds.strip('[]').split(',')
+            self.thresholds = [float(t) for t in self.thresholds]
+            self.thresholds = [df['RUL'].quantile(t) for t in self.thresholds]
         else: assert isinstance(self.thresholds, list), f'dataset not implemented for {self.thresholds=}'
-        class_label = lambda x: sum([int(x > t)  for t in self.thresholds]) # 0 is the "failure" label # TODO: windowing here
+        class_label = lambda x: sum([int(x > t)  for t in self.thresholds]) # 0 is the "failure" label 
         labels = df['RUL'].apply(class_label)
         
         # convert from pandas to pytorch
@@ -155,10 +170,11 @@ class MyDataset(Dataset):
             else:
                 # prepare a test dataset by skipping a fixed length each time
                 for l in lens:
-                    if l < duration:
-                        y0.append([0])
+                    N = (l - duration) // self.skip_chunk
+                    if N <= 0:
+                        y0.append([labels[cumulative_len + l - 1]])
                     else:
-                        N = (l - duration) // self.skip_chunk
+                        assert len(labels) >= cumulative_len + duration + (N-1) * self.skip_chunk, 'fetching labels too far out!'
                         y0.append([labels[cumulative_len + i*self.skip_chunk + duration - 1] for i in range(N)])
                     cumulative_len += l
 
@@ -168,6 +184,9 @@ class MyDataset(Dataset):
         
         # save labels as torch tensor
         self.y = torch.tensor(y).double()
+        len_x = len(self.x)
+        len_y = len(self.y)
+        assert len_x == len_y, f'data x, y length mismatch! {len_x=}, {len_y=}'
     
     def __getitem__(self, i):
         return self.x[i], self.y[i]
@@ -192,11 +211,13 @@ class MyDataset(Dataset):
         if self.train or self.pad: raise NotImplementedError('map_id_to_engine is only available for test data with pad==False')
         cum_idx = 0
         for i, l in enumerate(self.lens):
-            skip = 1 if l < self.duration else (l - self.duration) // self.skip_chunk
-            cum_idx += skip
+            N = (l - self.duration) // self.skip_chunk # number of samples constructed from frame of length l
+            if not N > 0: N = 1
+            cum_idx += N 
+            
             if id < cum_idx:
                 engine = i 
-                idx = id - (cum_idx - skip)
+                idx = id - (cum_idx - N)
                 return (engine, idx)
 
 
