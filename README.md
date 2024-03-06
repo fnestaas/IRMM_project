@@ -1,4 +1,6 @@
 # IRMM Project
+In this project, we wanted to assess potential costs and benefits of using machine learning models in predictive maintenence in aircraft engines.
+We take an adversarial perspective to investigate the worst-case costs when perturbations to "regular" signals are bounded. 
 
 ### Instructions
 To run the models, do the following:
